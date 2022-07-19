@@ -1,0 +1,142 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: rshiny-hello
+  annotations:
+    description: "Run hello world R Shiny application"
+objects:
+
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: r-code-ui
+  data:
+    ui.R: |
+      # Define UI for application that plots random distributions 
+      shinyUI(fluidPage(
+        
+        # Application title
+        titlePanel("Hello Shiny!"),
+        
+        # Sidebar with a slider input for number of observations
+        sidebarLayout(
+          sidebarPanel(
+            sliderInput("obs", 
+                        "Number of observations:", 
+                        min = 1, 
+                        max = 1000, 
+                        value = 500)
+          ),
+          
+          # Show a plot of the generated distribution
+          mainPanel(
+            plotOutput("distPlot")
+          )
+        )
+      ))
+
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: r-code-server
+  data:
+    server.R: |
+      library(shiny)
+
+      # Define server logic required to generate and plot a random distribution
+      shinyServer(function(input, output) {
+        
+        # Expression that generates a plot of the distribution. The expression
+        # is wrapped in a call to renderPlot to indicate that:
+        #
+        #  1) It is "reactive" and therefore should be automatically 
+        #     re-executed when inputs change
+        #  2) Its output type is a plot 
+        #
+        output$distPlot <- renderPlot({
+              
+          # generate an rnorm distribution and plot it
+          dist <- rnorm(input$obs)
+          hist(dist)
+        })
+        
+      })
+
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    labels:
+      app: rshiny-hello
+    name: rshiny-hello
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: rshiny-hello
+    template:
+      metadata:
+        labels:
+          app: rshiny-hello
+      spec:
+        containers:
+        - image: rocker/shiny
+          imagePullPolicy: Always
+          name: shiny-hello
+          ports:
+          - containerPort: 3838
+            protocol: TCP
+          volumeMounts:
+          - name: code-server-r-vol
+            mountPath: /srv/shiny-server/server.R
+            subPath: server.R
+          - name: code-ui-r-vol
+            mountPath: /srv/shiny-server/ui.R
+            subPath: ui.R
+          - name: shiny-log-vol
+            mountPath: /var/log/shiny-server
+        volumes:
+        - name: code-server-r-vol
+          configMap:
+            name: r-code-server
+        - name: code-ui-r-vol
+          configMap:
+            name: r-code-ui
+        - name: shiny-log-vol
+          emptyDir: {}
+
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+    labels:
+      app: rshiny-hello
+    name: rshiny-hello
+  spec:
+    ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 3838
+    selector:
+      app: rshiny-hello
+    sessionAffinity: None
+    type: ClusterIP
+
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    labels:
+      app: rshiny-hello
+    name: rshiny-hello
+  spec:
+    tls:
+      termination: edge
+    port:
+      targetPort: http
+    to:
+      kind: Service
+      name: rshiny-hello
+      weight: 100
+    wildcardPolicy: None
+
+parameters: []
